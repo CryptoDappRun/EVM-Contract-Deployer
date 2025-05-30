@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>EVM Contract Deployer</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/web3@1.10.0/dist/web3.min.js"></script>
+
+
+</head>
+<body class="bg-gray-100 text-gray-800 p-6">
+  <div class="max-w-3xl mx-auto bg-white p-6 rounded shadow">
+    <h1 class="text-2xl font-bold mb-4">EVM Contract Deployer-By private key</h1>
+
+    <label class="block mb-2 font-semibold">Private Key:</label>
+    <input id="privateKey" class="w-full p-2 border rounded mb-4" type="password" placeholder="0x..." />
+
+    <label class="block mb-2 font-semibold">RPC URL(chainlist.org):</label>
+    <input id="rpcUrl" class="w-full p-2 border rounded mb-4" type="text" placeholder="https://..." />
+
+    <label class="block mb-2 font-semibold">Contract ABI (JSON):</label>
+    <textarea id="contractAbi" class="w-full p-2 border rounded mb-4" rows="4" placeholder='[ ... ABI ... ]'></textarea>
+
+    <label class="block mb-2 font-semibold">Contract Bytecode (0x...):</label>
+    <textarea id="contractBytecode" class="w-full p-2 border rounded mb-4" rows="4" placeholder='0x...'></textarea>
+
+    <label class="block mb-2 font-semibold">Constructor Arguments (comma-separated):</label>
+    <input id="constructorArgs" class="w-full p-2 border rounded mb-4" type="text" placeholder="arg1, arg2, ..." />
+
+    <button onclick="deployContract()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Deploy Contract</button>
+
+    <div id="result" class="mt-6 text-sm bg-gray-100 p-3 rounded border whitespace-pre-wrap"></div>
+  </div>
+
+  <script>
+    async function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function deployContract() {
+      const privateKey = document.getElementById('privateKey').value.trim();
+      const rpcUrl = document.getElementById('rpcUrl').value.trim();
+      const abiJson = document.getElementById('contractAbi').value.trim();
+      const bytecode = document.getElementById('contractBytecode').value.trim();
+      const argsInput = document.getElementById('constructorArgs').value.trim();
+      const resultDiv = document.getElementById('result');
+
+      resultDiv.innerText = 'Processing...';
+
+      try {
+        if (!privateKey || !rpcUrl || !abiJson || !bytecode) {
+          resultDiv.innerText = 'Please fill in all fields.';
+          return;
+        }
+
+        const web3 = new Web3(new Web3.providers.HttpProvider(rpcUrl));
+        const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+        web3.eth.accounts.wallet.add(account);
+
+        const balanceWei = await web3.eth.getBalance(account.address);
+        const balanceEth = web3.utils.fromWei(balanceWei, 'ether');
+
+        resultDiv.innerText = `🧾 Public Address: ${account.address}\n💰 Balance: ${balanceEth} ETH\nWaiting 5 seconds before deployment...`;
+
+        // ⏱ Wait 5 seconds
+        await delay(5000);
+
+        const abi = JSON.parse(abiJson);
+        const contract = new web3.eth.Contract(abi);
+
+        const constructorArgs = argsInput
+          ? argsInput.split(',').map(arg => {
+              const trimmed = arg.trim();
+              if (trimmed === "true") return true;
+              if (trimmed === "false") return false;
+              if (!isNaN(trimmed)) return Number(trimmed);
+              return trimmed;
+            })
+          : [];
+
+        const deployTx = contract.deploy({
+          data: bytecode,
+          arguments: constructorArgs
+        });
+
+
+
+
+const gasEstimate = await deployTx.estimateGas({ from: account.address });
+const nonce = await web3.eth.getTransactionCount(account.address, 'pending');
+
+// Get current gas price from network
+let gasPrice = await web3.eth.getGasPrice();
+
+// Optionally bump it by 10% to avoid underpricing
+gasPrice = BigInt(gasPrice) + BigInt(gasPrice) / BigInt(10); // +10%
+gasPrice = gasPrice.toString();
+
+const newContract = await deployTx.send({
+  from: account.address,
+  gas: gasEstimate,
+  gasPrice: gasPrice,
+  nonce: nonce
+});
+
+
+
+
+        resultDiv.innerText += `\n✅ Contract Deployed!\n📦 Address: ${newContract.options.address}`;
+      } catch (err) {
+        console.error(err);
+        resultDiv.innerHTML = `<span class="text-red-600">❌ Error:</span> ${err.message}`;
+      }
+    }
+  </script>
+</body>
+</html>
