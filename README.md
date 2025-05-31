@@ -4,3 +4,6 @@ This tool will help you to deploy your smart contract to any evm blockchain with
 ``
 Sometimes the wallet depoly contract is particularly slow, so this tool was developed.
 ``
+
+* Deploy contract by private key
+* Read/Wirte contract by private key
