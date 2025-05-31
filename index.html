@@ -33,86 +33,167 @@
     <div id="result" class="mt-6 text-sm bg-gray-100 p-3 rounded border whitespace-pre-wrap"></div>
   </div>
 
-  <script>
-    async function delay(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms));
+
+
+
+<script>
+  async function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function deployContract() {
+    const privateKey = document.getElementById('privateKey').value.trim();
+    const rpcUrl = document.getElementById('rpcUrl').value.trim();
+    const abiJson = document.getElementById('contractAbi').value.trim();
+    const bytecode = document.getElementById('contractBytecode').value.trim();
+    const argsInput = document.getElementById('constructorArgs').value.trim();
+    const resultDiv = document.getElementById('result');
+
+    resultDiv.innerText = 'Processing...';
+
+    try {
+      if (!privateKey || !rpcUrl || !abiJson || !bytecode) {
+        resultDiv.innerText = 'Please fill in all fields.';
+        return;
+      }
+
+      const web3 = new Web3(new Web3.providers.HttpProvider(rpcUrl));
+      const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+      web3.eth.accounts.wallet.add(account);
+
+      const balanceWei = await web3.eth.getBalance(account.address);
+      const balanceEth = web3.utils.fromWei(balanceWei, 'ether');
+
+      resultDiv.innerText = `🧾 Public Address: ${account.address}\n💰 Balance: ${balanceEth} ETH\nWaiting 5 seconds before deployment...`;
+
+      await delay(5000);
+
+      const abi = JSON.parse(abiJson);
+      const contract = new web3.eth.Contract(abi);
+
+      const constructorArgs = argsInput
+        ? argsInput.split(',').map(arg => {
+            const trimmed = arg.trim();
+            if (trimmed === "true") return true;
+            if (trimmed === "false") return false;
+            if (!isNaN(trimmed)) return Number(trimmed);
+            return trimmed;
+          })
+        : [];
+
+      const deployTx = contract.deploy({
+        data: bytecode,
+        arguments: constructorArgs
+      });
+
+      const gasEstimate = await deployTx.estimateGas({ from: account.address });
+      const nonce = await web3.eth.getTransactionCount(account.address, 'pending');
+      let gasPrice = await web3.eth.getGasPrice();
+      gasPrice = (BigInt(gasPrice) + BigInt(gasPrice) / BigInt(10)).toString();
+
+      const newContract = await deployTx.send({
+        from: account.address,
+        gas: gasEstimate,
+        gasPrice: gasPrice,
+        nonce: nonce
+      });
+
+      resultDiv.innerText += `\n✅ Contract Deployed!\n📦 Address: ${newContract.options.address}`;
+
+      showInteractionUI(abi, newContract.options.address, web3, account);
+
+    } catch (err) {
+      console.error(err);
+      resultDiv.innerHTML = `<span class="text-red-600">❌ Error:</span> ${err.message}`;
     }
+  }
 
-    async function deployContract() {
-      const privateKey = document.getElementById('privateKey').value.trim();
-      const rpcUrl = document.getElementById('rpcUrl').value.trim();
-      const abiJson = document.getElementById('contractAbi').value.trim();
-      const bytecode = document.getElementById('contractBytecode').value.trim();
-      const argsInput = document.getElementById('constructorArgs').value.trim();
-      const resultDiv = document.getElementById('result');
+function showInteractionUI(abi, contractAddress, web3, account) {
+  const interactionDiv = document.createElement('div');
+  interactionDiv.className = 'mt-6 p-4 border rounded bg-gray-50';
+  interactionDiv.innerHTML = `<h2 class="text-xl font-bold mb-4">📚 Contract Interface</h2>`;
 
-      resultDiv.innerText = 'Processing...';
+  const contract = new web3.eth.Contract(abi, contractAddress);
+
+  abi.forEach(fn => {
+    if (fn.type !== 'function') return;
+
+    const fnDiv = document.createElement('div');
+    fnDiv.className = 'mb-4 p-2 border rounded';
+
+    const inputs = fn.inputs.map((input, i) => {
+      return `<input type="text" placeholder="${input.name || 'arg' + i}" data-type="${input.type}" class="fn-input border px-2 py-1 mr-2 mb-2" />`;
+    }).join('');
+
+    const isRead = fn.stateMutability === 'view' || fn.stateMutability === 'pure';
+    const btnLabel = isRead ? 'Read' : 'Write';
+
+    fnDiv.innerHTML = `
+      <div class="font-semibold mb-2">${fn.name}(${fn.inputs.map(i => i.type).join(', ')})</div>
+      ${inputs}
+      <button class="relative bg-${isRead ? 'green' : 'blue'}-600 text-white px-3 py-1 rounded hover:bg-${isRead ? 'green' : 'blue'}-700 flex items-center">
+        <span class="btn-text">${btnLabel}</span>
+        <svg class="spinner hidden ml-2 h-5 w-5 animate-spin text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+        </svg>
+      </button>
+      <div class="text-sm mt-2 output text-gray-700"></div>
+    `;
+
+    const btn = fnDiv.querySelector('button');
+    const spinner = fnDiv.querySelector('.spinner');
+    const btnText = fnDiv.querySelector('.btn-text');
+
+    btn.onclick = async () => {
+      const args = [...fnDiv.querySelectorAll('.fn-input')].map(input => {
+        const value = input.value.trim();
+        const type = input.getAttribute('data-type');
+        if (type === 'uint256' || type.startsWith('uint') || type === 'int') return Number(value);
+        if (type === 'bool') return value.toLowerCase() === 'true';
+        return value;
+      });
+
+      const outputDiv = fnDiv.querySelector('.output');
+
+      // Show spinner, disable button
+      spinner.classList.remove('hidden');
+      btnText.style.display = 'none';
+      btn.disabled = true;
+      outputDiv.innerText = '';
 
       try {
-        if (!privateKey || !rpcUrl || !abiJson || !bytecode) {
-          resultDiv.innerText = 'Please fill in all fields.';
-          return;
+        if (isRead) {
+          const result = await contract.methods[fn.name](...args).call();
+          outputDiv.innerText = `📤 Result: ${JSON.stringify(result)}`;
+        } else {
+          const gas = await contract.methods[fn.name](...args).estimateGas({ from: account.address });
+          const tx = await contract.methods[fn.name](...args).send({
+              from: account.address,
+              gas: gas,
+              gasPrice:await web3.eth.getGasPrice()
+            });
+          outputDiv.innerText = `✅ Tx Hash: ${tx.transactionHash}`;
         }
-
-        const web3 = new Web3(new Web3.providers.HttpProvider(rpcUrl));
-        const account = web3.eth.accounts.privateKeyToAccount(privateKey);
-        web3.eth.accounts.wallet.add(account);
-
-        const balanceWei = await web3.eth.getBalance(account.address);
-        const balanceEth = web3.utils.fromWei(balanceWei, 'ether');
-
-        resultDiv.innerText = `🧾 Public Address: ${account.address}\n💰 Balance: ${balanceEth} ETH\nWaiting 5 seconds before deployment...`;
-
-        // ⏱ Wait 5 seconds
-        await delay(5000);
-
-        const abi = JSON.parse(abiJson);
-        const contract = new web3.eth.Contract(abi);
-
-        const constructorArgs = argsInput
-          ? argsInput.split(',').map(arg => {
-              const trimmed = arg.trim();
-              if (trimmed === "true") return true;
-              if (trimmed === "false") return false;
-              if (!isNaN(trimmed)) return Number(trimmed);
-              return trimmed;
-            })
-          : [];
-
-        const deployTx = contract.deploy({
-          data: bytecode,
-          arguments: constructorArgs
-        });
-
-
-
-
-const gasEstimate = await deployTx.estimateGas({ from: account.address });
-const nonce = await web3.eth.getTransactionCount(account.address, 'pending');
-
-// Get current gas price from network
-let gasPrice = await web3.eth.getGasPrice();
-
-// Optionally bump it by 10% to avoid underpricing
-gasPrice = BigInt(gasPrice) + BigInt(gasPrice) / BigInt(10); // +10%
-gasPrice = gasPrice.toString();
-
-const newContract = await deployTx.send({
-  from: account.address,
-  gas: gasEstimate,
-  gasPrice: gasPrice,
-  nonce: nonce
-});
-
-
-
-
-        resultDiv.innerText += `\n✅ Contract Deployed!\n📦 Address: ${newContract.options.address}`;
       } catch (err) {
-        console.error(err);
-        resultDiv.innerHTML = `<span class="text-red-600">❌ Error:</span> ${err.message}`;
+        outputDiv.innerText = `❌ Error: ${err.message}`;
+      } finally {
+        // Hide spinner, enable button
+        spinner.classList.add('hidden');
+        btnText.style.display = '';
+        btn.disabled = false;
       }
-    }
-  </script>
+    };
+
+    interactionDiv.appendChild(fnDiv);
+  });
+
+  document.body.appendChild(interactionDiv);
+}
+
+</script>
+
+
+
 </body>
 </html>
